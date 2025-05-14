@@ -6,7 +6,7 @@ using AquaSkyLES
 Nx = 128
 Nz = 128
 Ny = 1
-Lz = 4 * 1024
+Lz = 2 * 1024
 grid = RectilinearGrid(size = (Nx, Ny, Nz),
                        x = (0, 2Lz),
                        y = (0, 2Lz),
@@ -30,7 +30,7 @@ parameters = (;
     heat_transfer_coefficient = 1e-3,
     vapor_transfer_coefficient = 1e-3,
     sea_surface_temperature = θ₀ + 10,
-    gust_speed = 1e-2,
+    gust_speed = 1e-2, # directly added to friction velocity (i.e. not multiplied by drag coefficient Cᴰ)
     base_air_density = AquaSkyLES.base_density(buoyancy), # air density at z=0,
     thermodynamics,
     condensation
@@ -42,53 +42,60 @@ parameters = (;
                                             parameters.thermodynamics,
                                             parameters.condensation)
 
-@inline function friction_velocity(x, y, t, u, v, parameters)
+
+@inline function friction_velocity(i, j, grid, clock, model_fields, parameters)
     Cᴰ = parameters.drag_coefficient
+    u = model_fields.u[i, j, 1]
+    v = model_fields.v[i, j, 1]
     Δu = u # stationary ocean
     Δv = v # stationary ocean
     return sqrt(Cᴰ * (Δu^2 + Δv^2)) + parameters.gust_speed
 end
 
 # Take care to handle U = 0
-@inline function x_momentum_flux(x, y, t, u, v, parameters)
-    u★ = friction_velocity(x, y, t, u, v, parameters)
+@inline function x_momentum_flux(i, j, grid, clock, model_fields, parameters)
+    u = model_fields.u[i, j, 1]
+    v = model_fields.v[i, j, 1]
+    u★ = friction_velocity(i, j, grid, clock, model_fields, parameters)
     U = sqrt(u^2 + v^2)
     return - u★^2 * u / U * (U > 0)
 end
 
-@inline function y_momentum_flux(x, y, t, u, v, parameters)
-    u★ = friction_velocity(x, y, t, u, v, parameters)
+@inline function y_momentum_flux(i, j, grid, clock, model_fields, parameters)
+    u = model_fields.u[i, j, 1]
+    v = model_fields.v[i, j, 1]
+    u★ = friction_velocity(i, j, grid, clock, model_fields, parameters)
     U = sqrt(u^2 + v^2)
     return - u★^2 * v / U * (U > 0)
 end
 
-@inline function temperature_flux(x, y, t, u, v, θ, parameters)
-    u★ = friction_velocity(x, y, t, u, v, parameters)
+@inline function temperature_flux(i, j, grid, clock, model_fields, parameters)
+    u★ = friction_velocity(i, j, grid, clock, model_fields, parameters)
     θˢ = parameters.sea_surface_temperature
     Cᴰ = parameters.drag_coefficient
     Cᴴ = parameters.heat_transfer_coefficient
-    Δθ = θ - θˢ
+    Δθ = model_fields.θ[i, j, 1] - θˢ
     # Using the scaling argument: u★ θ★ = Cᴴ * U * Δθ
     θ★ = Cᴴ / sqrt(Cᴰ) * Δθ
     return - u★ * θ★
 end
 
-@inline function vapor_flux(x, y, t, u, v, q, parameters)
-    u★ = friction_velocity(x, y, t, u, v, parameters)
+@inline function vapor_flux(i, j, grid, clock, model_fields, parameters)
+    u★ = friction_velocity(i, j, grid, clock, model_fields, parameters)
     θˢ = parameters.sea_surface_temperature
     qˢ = surface_saturation_specific_humidity(θˢ, parameters)
     Cᴰ = parameters.drag_coefficient
     Cᵛ = parameters.vapor_transfer_coefficient
-    Δq = q - qˢ
+    Δq = model_fields.q[i, j, 1] - qˢ
     # Using the scaling argument: u★ q★ = Cᵛ * U * Δq
     q★ = Cᵛ / sqrt(Cᴰ) * Δq 
     return - u★ * q★
 end
 
-u_surface_flux = FluxBoundaryCondition(x_momentum_flux; field_dependencies=(:u, :v), parameters)
-v_surface_flux = FluxBoundaryCondition(y_momentum_flux; field_dependencies=(:u, :v), parameters)
-θ_surface_flux = FluxBoundaryCondition(temperature_flux; field_dependencies=(:u, :v, :θ), parameters)
-q_surface_flux = FluxBoundaryCondition(vapor_flux; field_dependencies=(:u, :v, :q), parameters)
+u_surface_flux = FluxBoundaryCondition(x_momentum_flux; discrete_form=true, parameters)
+v_surface_flux = FluxBoundaryCondition(y_momentum_flux; discrete_form=true, parameters)
+θ_surface_flux = FluxBoundaryCondition(temperature_flux; discrete_form=true, parameters)
+q_surface_flux = FluxBoundaryCondition(vapor_flux; discrete_form=true, parameters)
 
 u_bcs = FieldBoundaryConditions(bottom=u_surface_flux)
 v_bcs = FieldBoundaryConditions(bottom=v_surface_flux)
@@ -102,7 +109,7 @@ model = NonhydrostaticModel(; grid, advection, buoyancy,
                             boundary_conditions = (u=u_bcs, v=v_bcs, θ=θ_bcs, q=q_bcs))
 
 Lz = grid.Lz
-Δθ = 5 # K
+Δθ = 2.5 # K
 Tₛ = reference_state.θ # K
 θᵢ(x, y, z) = Tₛ + Δθ * z / Lz + 1e-2 * Δθ * randn()
 qᵢ(x, y, z) = 1e-2 + 1e-5 * rand()
@@ -115,6 +122,7 @@ T = AquaSkyLES.TemperatureField(model)
 qˡ = AquaSkyLES.CondensateField(model, T)
 qᵛ★ = AquaSkyLES.SaturationField(model, T)
 δ = Field(model.tracers.q - qᵛ★)
+
 
 function progress(sim)
     compute!(T)
@@ -189,9 +197,9 @@ Tmin = minimum(Tt)
 Tmax = maximum(Tt)
 
 hmθ = heatmap!(axθ, θn, colorrange=(Tₛ, Tₛ+Δθ))
-hmq = heatmap!(axq, qn, colorrange=(0, 2e-2), colormap=:magma)
+hmq = heatmap!(axq, qn, colorrange=(0.97e-2, 1.05e-2), colormap=:magma)
 hmT = heatmap!(axT, Tn, colorrange=(Tmin, Tmax))
-hmqˡ = heatmap!(axqˡ, qˡn, colorrange=(0, 2e-4), colormap=:magma)
+hmqˡ = heatmap!(axqˡ, qˡn, colorrange=(0, 1.5e-3), colormap=:magma)
 
 # Label(fig[0, 1], "θ", tellwidth=false)
 # Label(fig[0, 2], "q", tellwidth=false)
