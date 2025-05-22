@@ -284,6 +284,14 @@ end
     return ref.p₀ * (1 - g * z / (cᵖᵈ * ref.θ))^ϰᵈ⁻¹
 end
 
+"""
+    saturation_specific_humidity(T, z, reference_state, thermodynamics, phase_transition)
+
+Using the Clasius-Claperyon relation for saturation vapor pressure, compute the
+saturation specific humidity at temperature `T`, height `z`, given the
+`reference_state`, `thermodynamics` constants, and `phase_transition` constants representing
+parameters representing either condensation (vapor to liquid) or deposition (vapor to solid).
+"""
 @inline function saturation_specific_humidity(T, z, ref::ReferenceState, thermo, phase_transition)
     ρ = reference_density(z, ref, thermo)
     return saturation_specific_humidity(T, ρ, thermo, phase_transition)
