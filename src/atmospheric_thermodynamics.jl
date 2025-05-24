@@ -1,6 +1,17 @@
+using Adapt
+
 struct IdealGas{FT}
     molar_mass :: FT
     heat_capacity :: FT # specific heat capacity at constant pressure
+end
+
+Base.eltype(::IdealGas{FT}) where FT = FT
+
+function Adapt.adapt_structure(to, gas::IdealGas)
+    molar_mass = adapt(to, gas.molar_mass)
+    heat_capacity = adapt(to, gas.heat_capacity)
+    FT = typeof(molar_mass)
+    return IdealGas{FT}(molar_mass, heat_capacity)
 end
 
 function IdealGas(FT = Oceananigans.defaults.FloatType;
@@ -16,6 +27,11 @@ struct Saturation{FT}
     triple_point_temperature :: FT
     triple_point_pressure :: FT
 end
+
+Adapt.adapt_structure(to, sat::Saturation) =
+    Saturation(adapt(to, sat.energy_reference_temperature),
+               adapt(to, sat.triple_point_temperature),
+               adapt(to, sat.triple_point_pressure))
 
 """
     Saturation(FT = Oceananigans.defaults.FloatType;
@@ -71,6 +87,10 @@ struct PhaseTransition{FT}
     heat_capacity :: FT
 end
 
+Adapt.adapt_structure(to, pt::PhaseTransition) =
+    PhaseTransition(adapt(to, pt.latent_heat),
+                    adapt(to, pt.heat_capacity))
+
 """
     PhaseTransition(FT = Oceananigans.defaults.FloatType; latent_heat, heat_capacity)
 
@@ -104,6 +124,29 @@ struct AtmosphereThermodynamics{FT, S, C, F}
     saturation :: S
     condensation :: C
     deposition :: F
+end
+
+Base.eltype(::AtmosphereThermodynamics{FT}) where FT = FT
+
+function Adapt.adapt_structure(to, thermo::AtmosphereThermodynamics)
+    molar_gas_constant = adapt(to, thermo.molar_gas_constant)   
+    gravitational_acceleration = adapt(to, thermo.gravitational_acceleration)
+    dry_air = adapt(to, thermo.dry_air)
+    vapor = adapt(to, thermo.vapor)
+    saturation = adapt(to, thermo.saturation)
+    condensation = adapt(to, thermo.condensation)
+    deposition = adapt(to, thermo.deposition)
+    FT = typeof(molar_gas_constant)
+    S = typeof(saturation)
+    C = typeof(condensation)
+    F = typeof(deposition)
+    return AtmosphereThermodynamics{FT, S, C, F}(molar_gas_constant,
+                                                 gravitational_acceleration,
+                                                 dry_air,
+                                                 vapor,
+                                                 saturation,
+                                                 condensation,
+                                                 deposition)
 end
 
 """
@@ -244,6 +287,10 @@ struct ReferenceState{FT}
     p₀ :: FT # base pressure: reference pressure at z=0
     θ :: FT  # constant reference potential temperature
 end
+
+Adapt.adapt_structure(to, ref::ReferenceState) =
+    ReferenceState(adapt(to, ref.p₀),
+                   adapt(to, ref.θ))
 
 function ReferenceState(FT = Oceananigans.defaults.FloatType;
                         base_pressure = 101325,
